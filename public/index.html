@@ -3,150 +3,192 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Place CRUD with Leaflet</title>
-    
+    <title>Peta Interaktif Login</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    
     <style>
-        /* (CSS Anda dari sebelumnya tetap sama, tidak perlu diubah) */
-        body { font-family: sans-serif; background-color: #f4f4f9; color: #333; margin: 0; padding: 20px; display: flex; justify-content: center; }
-        .container { width: 100%; max-width: 600px; }
-        h1, h2 { text-align: center; color: #444; }
-        form { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
-        input[type="text"], input[type="number"] { width: calc(100% - 22px); padding: 10px; margin-bottom: 10px; border-radius: 4px; border: 1px solid #ddd; }
-        button { width: 100%; padding: 10px; border: none; background-color: #007bff; color: white; border-radius: 4px; cursor: pointer; font-size: 16px; }
-        ul { list-style: none; padding: 0; }
-        li { background: white; padding: 15px; margin-bottom: 10px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; }
-        .actions button { width: auto; padding: 5px 10px; margin-left: 5px; font-size: 12px; }
-        .edit-btn { background-color: #28a745; }
-        .delete-btn { background-color: #dc3545; }
-        #map { height: 400px; width: 100%; background-color: #eee; margin-bottom: 20px; border-radius: 8px; }
+        body { font-family: sans-serif; background: #f4f4f9; margin: 0; padding: 20px; }
+        
+        /* Style untuk Login Overlay */
+        #auth-container {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); z-index: 9999;
+            display: flex; justify-content: center; align-items: center;
+        }
+        .auth-box { background: white; padding: 30px; border-radius: 10px; width: 300px; text-align: center; }
+        .auth-box input { width: 90%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 5px; }
+        .auth-box button { width: 100%; padding: 10px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        .auth-box .toggle { margin-top: 10px; font-size: 12px; color: blue; cursor: pointer; }
+
+        /* Style Main App (Disembunyikan saat belum login) */
+        #app-container { display: none; max-width: 900px; margin: 0 auto; }
+        #map { height: 400px; width: 100%; border-radius: 8px; margin-bottom: 20px; }
+        .controls { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        input { padding: 8px; margin: 5px; }
+        button.action-btn { padding: 8px 15px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button.logout-btn { background: #dc3545; float: right; }
     </style>
 </head>
 <body>
 
-<div class="container">
-    <h1>📍 Manajemen Tempat</h1>
-    <form id="place-form">
-        <div id="map"></div>
-        <p style="text-align:center; font-style:italic; color:#666; margin-top:-10px; margin-bottom:15px;">Klik di peta untuk memilih lokasi</p>
-        <input type="hidden" id="place-id">
-        <input type="text" id="name" placeholder="Nama Tempat" required>
-        <input type="number" id="longitude" placeholder="Longitude" step="any" required readonly>
-        <input type="number" id="latitude" placeholder="Latitude" step="any" required readonly>
-        <button type="submit">Simpan</button>
-    </form>
-    <h2>Daftar Tempat</h2>
+<div id="auth-container">
+    <div class="auth-box">
+        <h2 id="auth-title">Login</h2>
+        <input type="text" id="auth-user" placeholder="Username">
+        <input type="password" id="auth-pass" placeholder="Password">
+        <button onclick="handleAuth()" id="auth-btn">Masuk</button>
+        <div class="toggle" onclick="toggleAuthMode()" id="auth-toggle">Belum punya akun? Daftar</div>
+    </div>
+</div>
+
+<div id="app-container">
+    <div style="overflow:hidden; margin-bottom:10px;">
+        <h2 style="float:left;">📍 Sistem GIS</h2>
+        <button class="action-btn logout-btn" onclick="logout()">Logout</button>
+    </div>
+
+    <div id="map"></div>
+
+    <div class="controls">
+        <h3>Tambah Lokasi</h3>
+        <input type="text" id="name" placeholder="Nama Tempat">
+        <input type="text" id="lat" placeholder="Latitude" readonly>
+        <input type="text" id="lng" placeholder="Longitude" readonly>
+        <button class="action-btn" onclick="savePlace()">Simpan</button>
+    </div>
+    
     <ul id="places-list"></ul>
 </div>
 
 <script>
-    const apiUrl = '/api/places';
-    const form = document.getElementById('place-form');
-    const placeIdInput = document.getElementById('place-id');
-    const nameInput = document.getElementById('name');
-    const longInput = document.getElementById('longitude');
-    const latInput = document.getElementById('latitude');
-    const placesList = document.getElementById('places-list');
+    const apiUrl = '/api'; // Backend URL
+    let isLoginMode = true;
+    let token = localStorage.getItem('token'); // Cek token di memori browser
 
-    // --- INISIALISASI PETA LEAFLET ---
-    const bandungCoords = [-6.9175, 107.6191]; // Format Leaflet: [latitude, longitude]
-    const map = L.map('map').setView(bandungCoords, 13);
-    let marker = L.marker(bandungCoords).addTo(map);
-
-    // Menambahkan "tile layer" dari OpenStreetMap
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '© <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-    }).addTo(map);
-
-    // Event listener saat peta diklik
-    map.on('click', function(e) {
-        const coords = e.latlng;
-        marker.setLatLng(coords);
-        updateFormFields(coords);
-    });
-
-    function updateFormFields(coords) {
-        latInput.value = coords.lat;
-        longInput.value = coords.lng;
+    // --- LOGIC AUTH ---
+    function checkLogin() {
+        if (token) {
+            document.getElementById('auth-container').style.display = 'none';
+            document.getElementById('app-container').style.display = 'block';
+            initMap(); // Muat peta
+            fetchPlaces(); // Muat data
+        } else {
+            document.getElementById('auth-container').style.display = 'flex';
+            document.getElementById('app-container').style.display = 'none';
+        }
     }
 
-    // --- FUNGSI & EVENT LISTENER LAINNYA (TETAP SAMA) ---
-    async function fetchPlaces() {
-        const response = await fetch(apiUrl);
-        const places = await response.json();
-        
-        placesList.innerHTML = '';
-        if (!places) return;
+    function toggleAuthMode() {
+        isLoginMode = !isLoginMode;
+        document.getElementById('auth-title').innerText = isLoginMode ? "Login" : "Register";
+        document.getElementById('auth-btn').innerText = isLoginMode ? "Masuk" : "Daftar";
+        document.getElementById('auth-toggle').innerText = isLoginMode ? "Belum punya akun? Daftar" : "Sudah punya akun? Login";
+    }
 
-        places.forEach(place => {
-            const li = document.createElement('li');
-            li.innerHTML = `
-                <span>${place.name}</span>
-                <div class="actions">
-                    <button class="edit-btn" data-id="${place.id}" data-name="${place.name}" data-long="${place.location.coordinates[0]}" data-lat="${place.location.coordinates[1]}">Edit</button>
-                    <button class="delete-btn" data-id="${place.id}">Hapus</button>
-                </div>
-            `;
-            placesList.appendChild(li);
+    async function handleAuth() {
+        const user = document.getElementById('auth-user').value;
+        const pass = document.getElementById('auth-pass').value;
+        const endpoint = isLoginMode ? '/login' : '/register';
+
+        try {
+            const res = await fetch(apiUrl + endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: user, password: pass })
+            });
+            const data = await res.json();
+
+            if (!res.ok) throw new Error(data.error);
+
+            if (isLoginMode) {
+                localStorage.setItem('token', data.token);
+                token = data.token;
+                checkLogin();
+            } else {
+                alert("Registrasi berhasil! Silakan login.");
+                toggleAuthMode();
+            }
+        } catch (err) {
+            alert(err.message);
+        }
+    }
+
+    function logout() {
+        localStorage.removeItem('token');
+        location.reload();
+    }
+
+    // --- LOGIC PETA (Sama seperti sebelumnya, tapi dengan Token) ---
+    // Note: Saya menyingkat kode peta agar fokus ke Auth.
+    // Pastikan kode peta lengkap Anda dimasukkan di sini.
+    
+    let map, marker;
+    function initMap() {
+        if(map) return; // Jangan init ulang
+        map = L.map('map').setView([-6.9175, 107.6191], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+        marker = L.marker([-6.9175, 107.6191]).addTo(map);
+        
+        map.on('click', function(e) {
+            marker.setLatLng(e.latlng);
+            document.getElementById('lat').value = e.latlng.lat;
+            document.getElementById('lng').value = e.latlng.lng;
         });
     }
 
-    form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const id = placeIdInput.value;
-        const name = nameInput.value;
-        const long = parseFloat(longInput.value);
-        const lat = parseFloat(latInput.value);
+    async function fetchPlaces() {
+        const res = await fetch(apiUrl + '/places');
+        const places = await res.json();
+        const list = document.getElementById('places-list');
+        list.innerHTML = '';
+        places.forEach(p => {
+            const li = document.createElement('li');
+            li.innerHTML = `<b>${p.name}</b> <button onclick="deletePlace('${p.id}')" style="color:red">Hapus</button>`;
+            list.appendChild(li);
+            
+            // Tambah marker ke peta
+            L.marker([p.location.coordinates[1], p.location.coordinates[0]])
+             .addTo(map).bindPopup(p.name);
+        });
+    }
 
-        const url = id ? `${apiUrl}/${id}` : apiUrl;
-        const method = id ? 'PUT' : 'POST';
+    async function savePlace() {
+        const name = document.getElementById('name').value;
+        const lat = parseFloat(document.getElementById('lat').value);
+        const lng = parseFloat(document.getElementById('lng').value);
 
-        await fetch(url, {
-            method: method,
-            headers: { 'Content-Type': 'application/json' },
+        const res = await fetch(apiUrl + '/places', {
+            method: 'POST',
+            // --- PENTING: KIRIM TOKEN DI HEADER ---
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + token 
+            },
             body: JSON.stringify({
                 name: name,
-                location: {
-                    type: "Point",
-                    coordinates: [long, lat]
-                }
+                location: { type: "Point", coordinates: [lng, lat] }
             })
         });
 
-        form.reset();
-        placeIdInput.value = '';
+        if(res.ok) {
+            fetchPlaces();
+            document.getElementById('name').value = '';
+        } else {
+            alert("Gagal simpan (Mungkin sesi habis?)");
+        }
+    }
+
+    async function deletePlace(id) {
+        if(!confirm("Hapus?")) return;
+        await fetch(apiUrl + '/places/' + id, {
+            method: 'DELETE',
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
         fetchPlaces();
-    });
+    }
 
-    placesList.addEventListener('click', async (e) => {
-        if (e.target.classList.contains('edit-btn')) {
-            const { id, name, long, lat } = e.target.dataset;
-            placeIdInput.value = id;
-            nameInput.value = name;
-            longInput.value = long;
-            latInput.value = lat;
-
-            const coords = [lat, long];
-            map.setView(coords, 15); // Pindahkan view peta
-            marker.setLatLng(coords); // Pindahkan marker
-            
-            window.scrollTo(0, 0); 
-        }
-
-        if (e.target.classList.contains('delete-btn')) {
-            const id = e.target.dataset.id;
-            if (confirm('Apakah Anda yakin ingin menghapus tempat ini?')) {
-                await fetch(`${apiUrl}/${id}`, { method: 'DELETE' });
-                fetchPlaces();
-            }
-        }
-    });
-
-    // Panggil fetchPlaces saat halaman dimuat
-    fetchPlaces();
+    // Jalankan cek login saat web dibuka
+    checkLogin();
 </script>
 
 </body>

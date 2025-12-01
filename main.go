@@ -1,61 +1,82 @@
-// main.go
+// main.go (Update bagian Route)
 package main
 
 import (
+	// ... import lain tetap sama
 	"log"
 	"os"
-
+	"strings"
+	"net/http"
+	
 	"go-mongo-geojson/config"
 	"go-mongo-geojson/controllers"
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
 
-func main() {
-	// 1. Load .env (Local only)
-	err := godotenv.Load()
-	if err != nil {
-		log.Println("Info: .env file not found, using system environment variables")
-	}
+// Middleware Sederhana untuk Cek Token
+func AuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tokenString := c.GetHeader("Authorization")
+		if tokenString == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "No token provided"})
+			return
+		}
 
-	// 2. Connect Database
+		// Hapus "Bearer " dari string token
+		tokenString = strings.Replace(tokenString, "Bearer ", "", 1)
+		
+		jwtSecret := os.Getenv("JWT_SECRET")
+		if jwtSecret == "" { jwtSecret = "rahasia_super_aman" }
+
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			return []byte(jwtSecret), nil
+		})
+
+		if err != nil || !token.Valid {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+			return
+		}
+
+		c.Next()
+	}
+}
+
+func main() {
+	godotenv.Load()
 	mongoClient := config.ConnectDB()
 
-	// 3. Init Collection
+	// INISIALISASI COLLECTION
 	controllers.InitPlaceCollection(mongoClient)
+	controllers.InitUserCollection(mongoClient) // <-- TAMBAHAN BARU
 
-	// 4. Init Router
 	router := gin.Default()
-
-	// Setup CORS
 	router.Use(cors.Default())
 
-	// --- [PERBAIKAN UTAMA DI SINI] ---
-	// Melayani file static (CSS/JS jika ada di dalam folder public)
 	router.Static("/public", "./public")
-	
-	// Melayani file index.html di root URL "/"
-	// Pastikan folder "public" dan file "index.html" ikut ter-upload ke Render!
-	router.StaticFile("/", "./public/index.html") 
-	// ----------------------------------
+	router.StaticFile("/", "./public/index.html")
 
-	// Group API
 	api := router.Group("/api")
 	{
-		api.POST("/places", controllers.CreatePlace)
-		api.GET("/places", controllers.GetPlaces)
-		api.PUT("/places/:id", controllers.UpdatePlace)
-		api.DELETE("/places/:id", controllers.DeletePlace)
+		// Public Routes (Siapapun bisa akses)
+		api.GET("/places", controllers.GetPlaces) // Orang bisa lihat peta tanpa login
+		api.POST("/register", controllers.Register)
+		api.POST("/login", controllers.Login)
+
+		// Protected Routes (Harus Login)
+		protected := api.Group("/")
+		protected.Use(AuthMiddleware()) // Pasang Gembok di sini
+		{
+			protected.POST("/places", controllers.CreatePlace)
+			protected.PUT("/places/:id", controllers.UpdatePlace)
+			protected.DELETE("/places/:id", controllers.DeletePlace)
+		}
 	}
 
-	// 5. Run Server
 	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-
-	log.Printf("Server running on port %s", port)
+	if port == "" { port = "8080" }
 	router.Run(":" + port)
 }
