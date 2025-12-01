@@ -1,23 +1,22 @@
-// main.go (Update bagian Route)
+// main.go
 package main
 
 import (
-	// ... import lain tetap sama
-	"log"
+	"log" // Sekarang library ini akan terpakai di bawah
+	"net/http"
 	"os"
 	"strings"
-	"net/http"
-	
+
 	"go-mongo-geojson/config"
 	"go-mongo-geojson/controllers"
-	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
 )
 
-// Middleware Sederhana untuk Cek Token
+// Middleware Auth (Pengecekan Token)
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenString := c.GetHeader("Authorization")
@@ -26,11 +25,13 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Hapus "Bearer " dari string token
+		// Hapus "Bearer " dari string token jika ada
 		tokenString = strings.Replace(tokenString, "Bearer ", "", 1)
 		
 		jwtSecret := os.Getenv("JWT_SECRET")
-		if jwtSecret == "" { jwtSecret = "rahasia_super_aman" }
+		if jwtSecret == "" {
+			jwtSecret = "rahasia_super_aman"
+		}
 
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			return []byte(jwtSecret), nil
@@ -46,29 +47,38 @@ func AuthMiddleware() gin.HandlerFunc {
 }
 
 func main() {
-	godotenv.Load()
+	// 1. Load .env (Local only)
+	// Kita gunakan log di sini agar import "log" valid
+	if err := godotenv.Load(); err != nil {
+		log.Println("Info: .env file not found, using system environment variables")
+	}
+
+	// 2. Connect Database
 	mongoClient := config.ConnectDB()
 
-	// INISIALISASI COLLECTION
+	// 3. Init Collections
 	controllers.InitPlaceCollection(mongoClient)
-	controllers.InitUserCollection(mongoClient) // <-- TAMBAHAN BARU
+	controllers.InitUserCollection(mongoClient) 
 
+	// 4. Setup Router
 	router := gin.Default()
 	router.Use(cors.Default())
 
+	// Static Files (Frontend)
 	router.Static("/public", "./public")
 	router.StaticFile("/", "./public/index.html")
 
+	// 5. Routes API
 	api := router.Group("/api")
 	{
-		// Public Routes (Siapapun bisa akses)
-		api.GET("/places", controllers.GetPlaces) // Orang bisa lihat peta tanpa login
+		// Public Routes
+		api.GET("/places", controllers.GetPlaces) 
 		api.POST("/register", controllers.Register)
 		api.POST("/login", controllers.Login)
 
-		// Protected Routes (Harus Login)
+		// Protected Routes (Butuh Login)
 		protected := api.Group("/")
-		protected.Use(AuthMiddleware()) // Pasang Gembok di sini
+		protected.Use(AuthMiddleware()) 
 		{
 			protected.POST("/places", controllers.CreatePlace)
 			protected.PUT("/places/:id", controllers.UpdatePlace)
@@ -76,7 +86,13 @@ func main() {
 		}
 	}
 
+	// 6. Run Server
 	port := os.Getenv("PORT")
-	if port == "" { port = "8080" }
+	if port == "" {
+		port = "8080"
+	}
+
+	// Kita gunakan log di sini juga sebagai indikator server jalan
+	log.Printf("Server running on port %s", port)
 	router.Run(":" + port)
 }
