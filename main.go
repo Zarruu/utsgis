@@ -3,7 +3,7 @@ package main
 
 import (
 	"log"
-	"os" // Tambahkan import os untuk membaca env var
+	"os"
 
 	"go-mongo-geojson/config"
 	"go-mongo-geojson/controllers"
@@ -14,31 +14,34 @@ import (
 )
 
 func main() {
-	// 1. Muat file .env (Hanya untuk Local Development)
-	// Di Cloud (Render/Koyeb), file .env tidak ikut di-upload.
-	// Variabel akan dibaca langsung dari sistem environment hosting.
+	// 1. Load .env (Local only)
 	err := godotenv.Load()
 	if err != nil {
 		log.Println("Info: .env file not found, using system environment variables")
 	}
 
-	// 2. Hubungkan ke database
-	// Pastikan fungsi ini membaca os.Getenv("MONGO_URI")!
+	// 2. Connect Database
 	mongoClient := config.ConnectDB()
 
-	// PANGGIL FUNGSI INISIALISASI CONTROLLER DI SINI
+	// 3. Init Collection
 	controllers.InitPlaceCollection(mongoClient)
 
-	// Inisialisasi router Gin
-	// Di production, set GIN_MODE=release di environment variable hosting
+	// 4. Init Router
 	router := gin.Default()
 
 	// Setup CORS
-	// Default() mengizinkan semua origin, aman untuk tahap awal/testing.
-	// Nanti bisa diperketat jika frontend sudah punya domain tetap.
 	router.Use(cors.Default())
 
-	// Definisikan rute API
+	// --- [PERBAIKAN UTAMA DI SINI] ---
+	// Melayani file static (CSS/JS jika ada di dalam folder public)
+	router.Static("/public", "./public")
+	
+	// Melayani file index.html di root URL "/"
+	// Pastikan folder "public" dan file "index.html" ikut ter-upload ke Render!
+	router.StaticFile("/", "./public/index.html") 
+	// ----------------------------------
+
+	// Group API
 	api := router.Group("/api")
 	{
 		api.POST("/places", controllers.CreatePlace)
@@ -47,13 +50,12 @@ func main() {
 		api.DELETE("/places/:id", controllers.DeletePlace)
 	}
 
-	// 3. Konfigurasi PORT Dinamis (WAJIB UNTUK CLOUD)
+	// 5. Run Server
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080" // Fallback ke 8080 jika dijalankan di local tanpa .env
+		port = "8080"
 	}
 
-	// Jalankan server dengan port dinamis
 	log.Printf("Server running on port %s", port)
-	router.Run(":" + port) 
+	router.Run(":" + port)
 }
